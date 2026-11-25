@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Downloader
+GenericName=Torrent and Download Manager
+Comment=Download torrents, magnet links and direct links fast
+Exec=downloader %U
+Icon=io.github.voidrlm.Downloader
+Terminal=false
+Categories=Network;FileTransfer;P2P;GTK;
+Keywords=torrent;bittorrent;magnet;download;downloader;aria2;qbittorrent;
+MimeType=application/x-bittorrent;x-scheme-handler/magnet;
+StartupNotify=true
+SingleMainWindow=true
