@@ -6,6 +6,7 @@ with many connections per file.  One list shows both.
 
 import json
 import os
+import subprocess
 import sys
 import threading
 
@@ -504,9 +505,10 @@ class Window(Adw.ApplicationWindow):
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu,
                                        primary=True, tooltip_text="Main Menu"))
         tv.add_top_bar(header)
-        missing = app.startup_warnings()
-        self.banner = Adw.Banner(title="\n".join(missing), revealed=bool(missing))
+        self.banner = Adw.Banner()
+        self.banner.connect("button-clicked", lambda *_: app.install_engines())
         tv.add_top_bar(self.banner)
+        self.show_missing_banner()
 
         self.list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, valign=Gtk.Align.START)
         self.list.add_css_class("boxed-list")
@@ -566,6 +568,21 @@ class Window(Adw.ApplicationWindow):
         drop.connect("enter", lambda *_: (self.toasts.add_css_class("drop-highlight"), Gdk.DragAction.COPY)[1])
         drop.connect("leave", lambda *_: self.toasts.remove_css_class("drop-highlight"))
         self.add_controller(drop)
+
+    def show_missing_banner(self):
+        pkgs = self.app.missing_packages()
+        if not pkgs:
+            self.banner.set_revealed(False)
+        else:
+            if len(pkgs) == 2:
+                title = "Torrents and direct links need two small packages to work"
+            elif pkgs[0] == "aria2":
+                title = "Direct links need the aria2 package to work"
+            else:
+                title = "Torrents need the libtorrent package to work"
+            self.banner.set_title(title)
+            self.banner.set_button_label("Install")
+            self.banner.set_revealed(True)
 
     # -- refresh
 
@@ -920,15 +937,61 @@ class App(Adw.Application):
         about.set_debug_info("\n".join(engines_info))
         about.present(self.window)
 
-    def startup_warnings(self):
-        missing = []
-        if not self.torrents:
-            missing.append(engines.TorrentEngine.missing_hint)
-        if not self.links.available:
-            missing.append(self.links.missing_hint)
-        return missing
+    # -- installing the engines
+
+    def missing_packages(self):
+        pkgs = []
+        if not engines.TorrentEngine.available:
+            pkgs.append("rb_libtorrent-python3")
+        if not self.links.binary:
+            pkgs.append("aria2")
+        return pkgs
+
+    def install_engines(self):
+        """Install the missing engines with dnf behind the normal GNOME password prompt."""
+        pkgs = self.missing_packages()
+        win = self.window
+        if not pkgs:
+            return
+        win.banner.set_title("Installing… enter your password if asked")
+        win.banner.set_button_label(None)
+        try:
+            proc = Gio.Subprocess.new(["pkexec", "dnf", "install", "-y", *pkgs],
+                                      Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
+        except GLib.Error as e:
+            win.toast(f"Couldn't start the installer: {e.message}")
+            win.show_missing_banner()
+            return
+
+        def done(p, res):
+            try:
+                _ok, _out, err = p.communicate_utf8_finish(res)
+            except GLib.Error as e:
+                err = e.message
+            code = p.get_exit_status() if p.get_if_exited() else -1
+            if code == 0:
+                win.banner.set_title("Installed — restarting Downloader…")
+                self.restart = True
+                GLib.timeout_add(800, lambda: (self.quit(), False)[1])
+                return
+            if code in (126, 127):  # pkexec: password dialog dismissed / not authorised
+                win.toast("Install cancelled")
+            else:
+                last = (err or "").strip().splitlines()[-1:] or ["unknown error"]
+                win.toast(f"Install failed: {last[0]}")
+            win.show_missing_banner()
+
+        proc.communicate_utf8_async(None, None, done)
 
 
 def main():
     app = App()
-    return app.run(sys.argv)
+    app.restart = False
+    rc = app.run(sys.argv)
+    if app.restart:
+        # Start a fresh copy once this one has let go of its D-Bus name, so the newly
+        # installed engines get loaded.
+        launcher = os.path.realpath(sys.argv[0])
+        subprocess.Popen(["sh", "-c", 'sleep 1; exec "$0"', launcher], start_new_session=True,
+                         stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    return rc
