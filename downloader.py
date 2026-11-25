@@ -9,6 +9,7 @@ import os
 import subprocess
 import sys
 import threading
+import time
 
 import gi
 
@@ -27,6 +28,8 @@ APP_NAME = "Downloader"
 VERSION = "1.0"
 
 STATE_DIR = os.environ.get("DOWNLOADER_STATE") or os.path.join(GLib.get_user_data_dir(), "downloader")
+# Written while a closing copy saves its state, so a copy started meanwhile waits for it.
+CLOSING_FILE = os.path.join(STATE_DIR, "closing.pid")
 CONFIG_FILE = os.path.join(os.environ.get("DOWNLOADER_CONFIG_DIR") or
                            os.path.join(GLib.get_user_config_dir(), "downloader"), "config.json")
 
@@ -892,6 +895,11 @@ class App(Adw.Application):
     def do_shutdown(self):
         if self.window:
             self.window.set_visible(False)
+        try:
+            with open(CLOSING_FILE, "w") as f:
+                f.write(str(os.getpid()))
+        except OSError:
+            pass
         if self.links:
             self.links.shutdown()
         if self.torrents:
@@ -1037,14 +1045,55 @@ class App(Adw.Application):
         proc.communicate_utf8_async(None, None, done)
 
 
+def wait_for_closing_copy(timeout=10.0):
+    """If a previous Downloader is still saving its state on the way out, wait for it to exit.
+
+    Otherwise this copy would hand its request to the closing one (which owns the app's
+    D-Bus name until it exits) and nothing would open.
+    """
+    end = time.monotonic() + timeout
+    while time.monotonic() < end:
+        try:
+            with open(CLOSING_FILE) as f:
+                pid = int(f.read().strip() or 0)
+            os.kill(pid, 0)  # raises if that process is gone
+        except (OSError, ValueError):
+            break
+        if pid == os.getpid():
+            break
+        time.sleep(0.1)
+    try:
+        os.remove(CLOSING_FILE)
+    except OSError:
+        pass
+
+
 def main():
-    app = App()
-    app.restart = False
-    rc = app.run(sys.argv)
+    wait_for_closing_copy()
+    for attempt in range(3):
+        app = App()
+        app.restart = False
+        start = time.monotonic()
+        rc = app.run(sys.argv)
+        # run() returns 1 at once when registering with D-Bus failed (e.g. the old copy
+        # disconnected mid-handover); try again rather than silently not opening.
+        if rc == 1 and not app.get_is_registered() and time.monotonic() - start < 5:
+            time.sleep(0.5)
+            continue
+        break
     if app.restart:
         # Start a fresh copy once this one has let go of its D-Bus name, so the newly
         # installed engines get loaded.
         launcher = os.path.realpath(sys.argv[0])
         subprocess.Popen(["sh", "-c", 'sleep 1; exec "$0"', launcher], start_new_session=True,
                          stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    return rc
+    # Everything is saved by now.  Exit without running destructors: tearing down the
+    # libtorrent session waits ~30 s on the router (UPnP), which kept the app's D-Bus name
+    # taken and stopped it from opening again.
+    try:
+        os.remove(CLOSING_FILE)
+    except OSError:
+        pass
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(rc)

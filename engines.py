@@ -375,7 +375,9 @@ class TorrentEngine:
                         pass
                 elif isinstance(a, lt.save_resume_data_failed_alert):
                     waiting -= 1
-        del self.ses
+        # Destroying the session isn't done here: with UPnP on, libtorrent then waits ~30 s
+        # for the router to drop its port mappings.  main() ends the process with os._exit
+        # instead; the mappings expire on the router by themselves.
 
 
 # ------------------------------------------------------------------ direct links (aria2)

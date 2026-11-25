@@ -1,23 +1,31 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128">
   <defs>
-    <linearGradient id="body" x1="0" y1="12" x2="0" y2="112" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#62a0ea"/>
-      <stop offset="1" stop-color="#1c71d8"/>
+    <linearGradient id="face" x1="0" y1="8" x2="0" y2="116" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ff9a4d"/>
+      <stop offset="0.5" stop-color="#ff6250"/>
+      <stop offset="1" stop-color="#e6325f"/>
     </linearGradient>
-    <linearGradient id="side" x1="0" y1="100" x2="0" y2="116" gradientUnits="userSpaceOnUse">
-      <stop offset="0" stop-color="#1a5fb4"/>
-      <stop offset="1" stop-color="#174e96"/>
+    <linearGradient id="lip" x1="0" y1="64" x2="0" y2="124" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#c62a52"/>
+      <stop offset="1" stop-color="#9e1d43"/>
     </linearGradient>
+    <radialGradient id="shine" cx="64" cy="20" r="62" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.28"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect x="12" y="20" width="104" height="96" rx="24" fill="url(#side)"/>
-  <rect x="12" y="12" width="104" height="96" rx="24" fill="url(#body)"/>
-  <!-- arrow -->
-  <path d="M56 28h16a2 2 0 0 1 2 2v28h13.2a2 2 0 0 1 1.5 3.3L65.5 87.6a2 2 0 0 1-3 0L39.3 61.3a2 2 0 0 1 1.5-3.3H54V30a2 2 0 0 1 2-2z" fill="#ffffff"/>
-  <!-- tray -->
-  <rect x="34" y="92" width="60" height="7" rx="3.5" fill="#ffffff" opacity="0.92"/>
-  <!-- swarm dots -->
-  <circle cx="28" cy="34" r="5" fill="#ffffff" opacity="0.55"/>
-  <circle cx="100" cy="34" r="5" fill="#ffffff" opacity="0.55"/>
-  <circle cx="24" cy="64" r="3.5" fill="#ffffff" opacity="0.4"/>
-  <circle cx="104" cy="64" r="3.5" fill="#ffffff" opacity="0.4"/>
+  <!-- base with a darker lip at the bottom, Adwaita style -->
+  <circle cx="64" cy="66" r="56" fill="url(#lip)"/>
+  <circle cx="64" cy="61" r="56" fill="url(#face)"/>
+  <circle cx="64" cy="61" r="56" fill="url(#shine)"/>
+  <!-- soft shadow of the glyph -->
+  <g fill="none" stroke="#8a1638" stroke-opacity="0.28" stroke-linecap="round" stroke-linejoin="round" transform="translate(0 3)">
+    <path d="M64 31v44M44 57l20 20 20-20" stroke-width="13"/>
+    <path d="M42 93h44" stroke-width="10"/>
+  </g>
+  <!-- arrow into tray -->
+  <g fill="none" stroke="#ffffff" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M64 31v44M44 57l20 20 20-20" stroke-width="13"/>
+    <path d="M42 93h44" stroke-width="10"/>
+  </g>
 </svg>
