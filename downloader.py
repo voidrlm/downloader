@@ -17,6 +17,8 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 
 import engines  # noqa: E402
+import search  # noqa: E402
+import search_ui  # noqa: E402
 from engines import (CHECKING, CONNECTING, DONE, DOWNLOADING, ERROR, FINISHED_STATES,  # noqa: E402
                      METADATA, PAUSED, QUEUED, SEEDING)
 
@@ -37,6 +39,7 @@ DEFAULTS = {
     "max_active": 5,       # direct links downloading at once
     "seed": True,          # keep sharing finished torrents
     "notify": True,
+    "engines": {},         # search engine id -> on/off; missing = engine's default
 }
 
 CSS = """
@@ -430,7 +433,24 @@ class PrefsDialog(Adw.PreferencesDialog):
         g.add(self.switch("Keep sharing after downloading",
                           "Uploads finished torrents to others, like qBittorrent does", "seed"))
         page.add(g)
+        page.set_title("General")
+        page.set_icon_name("emblem-system-symbolic")
         self.add(page)
+
+        page = Adw.PreferencesPage(name="search", title="Search", icon_name="system-search-symbolic")
+        g = Adw.PreferencesGroup(title="Search Engines")
+        on = cfg.get("engines", {})
+        for e in search.ENGINES:
+            row = Adw.SwitchRow(title=e.name, active=on.get(e.id, e.default_enabled))
+            row.connect("notify::active", lambda r, _p, eid=e.id: self.set_engine(eid, r.get_active()))
+            g.add(row)
+        page.add(g)
+        self.add(page)
+
+    def set_engine(self, eid, active):
+        engines_on = dict(self.win.app.cfg.get("engines", {}))
+        engines_on[eid] = active
+        self.win.app.set_pref("engines", engines_on)
 
     def switch(self, title, subtitle_or_key, key=None):
         if key is None:
@@ -483,9 +503,15 @@ class Window(Adw.ApplicationWindow):
         add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add Download (Ctrl+N)")
         add.connect("clicked", lambda *_: self.show_add())
         header.pack_start(add)
+        self.search_entry = Gtk.SearchEntry(placeholder_text="Search torrents & archive.org",
+                                            width_chars=26, tooltip_text="Search (Ctrl+F)")
+        self.search_entry.connect("activate", lambda e: self.run_search(e.get_text()))
+        self.search_entry.connect("stop-search", lambda *_: self.leave_search())
+        header.pack_start(self.search_entry)
 
         self.tabs = Adw.ToggleGroup()
-        for name, label in (("all", "All"), ("active", "Downloading"), ("done", "Finished")):
+        for name, label in (("all", "All"), ("active", "Downloading"), ("done", "Finished"),
+                            ("search", "Search")):
             self.tabs.add(Adw.Toggle(name=name, label=label))
         self.tabs.set_active_name("all")
         self.tabs.connect("notify::active-name", self.on_tab)
@@ -534,6 +560,8 @@ class Window(Adw.ApplicationWindow):
         self.stack.add_named(self.empty, "empty")
         self.stack.add_named(self.empty_filtered, "empty-filtered")
         self.stack.add_named(self.scroll, "list")
+        self.search_page = search_ui.SearchPage(self)
+        self.stack.add_named(self.search_page, "search")
         self.toasts = Adw.ToastOverlay(child=self.stack)
         tv.set_content(self.toasts)
 
@@ -602,7 +630,9 @@ class Window(Adw.ApplicationWindow):
                 self.list.remove(self.rows.pop(key))
         self.list.invalidate_filter()
         visible = any(self.filter_row(r) for r in self.rows.values())
-        if not self.rows:
+        if self.filter == "search":
+            pass  # the search page stays up; the status bar below still updates
+        elif not self.rows:
             self.stack.set_visible_child_name("empty")
         elif not visible:
             self.empty_filtered.set_title("Nothing Downloading" if self.filter == "active" else "Nothing Finished Yet")
@@ -634,7 +664,24 @@ class Window(Adw.ApplicationWindow):
 
     def on_tab(self, *_):
         self.filter = self.tabs.get_active_name() or "all"
+        if self.filter == "search":
+            self.stack.set_visible_child_name("search")
+            self.search_page.refresh()
+            if not self.search_page.query:
+                self.search_entry.grab_focus()
         self.app.tick()
+
+    # -- search
+
+    def run_search(self, text):
+        if not text.strip():
+            return
+        self.tabs.set_active_name("search")
+        self.search_page.search(text)
+
+    def leave_search(self):
+        if self.filter == "search":
+            self.tabs.set_active_name("all")
 
     # -- adding
 
@@ -662,6 +709,9 @@ class Window(Adw.ApplicationWindow):
             if isinstance(focus, (Gtk.Text, Gtk.TextView, Gtk.Editable)):
                 return False
             self.paste()
+            return True
+        if keyval in (Gdk.KEY_f, Gdk.KEY_F):
+            self.search_entry.grab_focus()
             return True
         if keyval in (Gdk.KEY_n, Gdk.KEY_N, Gdk.KEY_o, Gdk.KEY_O):
             self.show_add()
@@ -923,8 +973,11 @@ class App(Adw.Application):
 
     # -- dialogs
 
-    def show_prefs(self):
-        PrefsDialog(self.window).present(self.window)
+    def show_prefs(self, page=None):
+        dlg = PrefsDialog(self.window)
+        if page:
+            dlg.set_visible_page_name(page)
+        dlg.present(self.window)
 
     def show_about(self):
         about = Adw.AboutDialog(application_name=APP_NAME, application_icon=APP_ID,

@@ -9,6 +9,10 @@ A simple torrent and download manager for GNOME — like qBittorrent, minus the 
 - One list for both, with All / Downloading / Finished filters, total speed and free space.
 - Paste links with **Ctrl+V**, drop `.torrent` files or links on the window, or pass them on
   the command line. Magnet links and `.torrent` files from the browser open here.
+- **Search** from the header bar (Ctrl+F): The Pirate Bay, Torrents-CSV, Nyaa and
+  Internet Archive, each switchable in Preferences → Search (like qBittorrent's search
+  plugins). Results are sorted by seeds; torrents with 0 seeds are hidden. Internet Archive
+  items open a file list for direct downloads, or download the whole item as a web-seeded torrent.
 - Speed limits, connections per download, notifications when finished.
 
 ## Install (Fedora)
