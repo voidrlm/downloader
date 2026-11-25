@@ -522,9 +522,11 @@ class Window(Adw.ApplicationWindow):
         header.pack_start(self.search_entry)
 
         self.tabs = Adw.ToggleGroup()
-        for name, label in (("all", "All"), ("active", "Downloading"), ("done", "Finished"),
-                            ("search", "Search")):
-            self.tabs.add(Adw.Toggle(name=name, label=label))
+        for name, icon, tip in (("all", "view-list-bullet-symbolic", "All"),
+                                ("active", "folder-download-symbolic", "Downloading"),
+                                ("done", "object-select-symbolic", "Finished"),
+                                ("search", "system-search-symbolic", "Search Results")):
+            self.tabs.add(Adw.Toggle(name=name, icon_name=icon, tooltip=tip))
         self.tabs.set_active_name("all")
         self.tabs.connect("notify::active-name", self.on_tab)
         header.set_title_widget(self.tabs)
