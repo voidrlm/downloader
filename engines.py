@@ -37,6 +37,21 @@ ERROR = "error"
 
 FINISHED_STATES = (SEEDING, DONE)
 
+TRACKERS_URL = "https://raw.githubusercontent.com/ngosang/trackerslist/master/trackers_best.txt"
+EXTRA_TRACKERS = [  # fallback when the list above can't be fetched
+    "udp://tracker.opentrackr.org:1337/announce",
+    "udp://open.demonii.com:1337/announce",
+    "udp://open.stealth.si:80/announce",
+    "udp://tracker.torrent.eu.org:451/announce",
+    "udp://exodus.desync.com:6969/announce",
+    "udp://explodie.org:6969/announce",
+    "udp://tracker.dler.org:6969/announce",
+    "udp://tracker.qu.ax:6969/announce",
+    "udp://open.free-tracker.ga:6969/announce",
+    "udp://tracker.theoks.net:6969/announce",
+    "http://tracker.opentrackr.org:1337/announce",
+]
+
 VIDEO_EXT = (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".webm", ".wmv", ".ts", ".m2ts", ".mpg",
              ".mpeg", ".flv", ".ogv")
 SUB_EXT = (".srt", ".ass", ".ssa", ".vtt", ".sub", ".idx", ".smi")
@@ -170,8 +185,10 @@ class TorrentEngine:
         self._last_resume_save = time.monotonic()
         self.media = {}         # key -> {"video": file index or None, "subs": [file indexes]}
         self.seed = False
+        self.state_dir = state_dir
+        port = self._listen_port()
         self.ses = lt.session({
-            "listen_interfaces": "0.0.0.0:6881,[::]:6881",
+            "listen_interfaces": f"0.0.0.0:{port},[::]:{port}",
             "enable_dht": True, "enable_lsd": True, "enable_upnp": True, "enable_natpmp": True,
             "dht_bootstrap_nodes": "dht.libtorrent.org:25401,router.bittorrent.com:6881,"
                                    "router.utorrent.com:6881,dht.transmissionbt.com:6881",
@@ -179,9 +196,25 @@ class TorrentEngine:
                            | lt.alert.category_t.status_notification
                            | lt.alert.category_t.storage_notification),
             "user_agent": "Downloader/1.0 libtorrent/" + lt.__version__,
-            "connections_limit": 800,
             "active_downloads": -1, "active_seeds": -1, "active_limit": -1,
+            # Speed tuning, measured on an Ubuntu ISO torrent: ~0.1 MB/s / 1 peer with
+            # libtorrent's defaults vs ~8 MB/s / ~220 peers with these plus EXTRA_TRACKERS.
+            # The big one is announcing to every tracker/tier: by default libtorrent sticks to
+            # the first tracker, and when that one gives few peers the torrent crawls.
+            "announce_to_all_trackers": True, "announce_to_all_tiers": True,
+            "connections_limit": 2000, "connection_speed": 200, "torrent_connect_boost": 120,
+            "smooth_connects": False, "peer_connect_timeout": 7, "min_reconnect_time": 20,
+            "max_out_request_queue": 1500, "max_allowed_in_request_queue": 2000,
+            "request_queue_time": 3, "max_queued_disk_bytes": 64 << 20,
+            "aio_threads": 16, "hashing_threads": 4,
+            "send_buffer_watermark": 3 << 20, "send_buffer_watermark_factor": 150,
+            "max_peerlist_size": 10000, "dht_upload_rate_limit": 50000,
+            "dht_announce_interval": 300, "unchoke_slots_limit": 64,
+            "peer_turnover": 8, "peer_turnover_cutoff": 95,  # drop the slowest peers more often
+            "mixed_mode_algorithm": 1,  # peer_proportional: don't throttle uTP next to TCP
         })
+        self.trackers = list(EXTRA_TRACKERS)
+        threading.Thread(target=self._refresh_trackers, daemon=True).start()
         self.apply_settings(settings)
         self._piece_waiters = {}  # (key, piece) -> [[threading.Event, data]]
         self._lock = threading.Lock()
@@ -244,6 +277,65 @@ class TorrentEngine:
     def _key(h):
         return str(h.info_hash())
 
+    def _listen_port(self):
+        """A random high port, kept across runs (6881 is the default that ISPs throttle)."""
+        path = os.path.join(self.state_dir, "port")
+        try:
+            with open(path) as f:
+                port = int(f.read())
+            if 1024 < port < 65536:
+                return port
+        except (OSError, ValueError):
+            pass
+        port = secrets.randbelow(10000) + 50000
+        try:
+            with open(path, "w") as f:
+                f.write(str(port))
+        except OSError:
+            pass
+        return port
+
+    def _refresh_trackers(self):
+        """Up-to-date public tracker list (ngosang/trackerslist), cached for a day."""
+        path = os.path.join(self.state_dir, "trackers.txt")
+        text = ""
+        try:
+            if time.time() - os.path.getmtime(path) < 86400:
+                with open(path) as f:
+                    text = f.read()
+        except OSError:
+            pass
+        if not text:
+            try:
+                req = urllib.request.Request(TRACKERS_URL, headers={"User-Agent": "Downloader/1.0"})
+                with urllib.request.urlopen(req, timeout=15) as r:
+                    text = r.read(200_000).decode("utf-8", "replace")
+                with open(path, "w") as f:
+                    f.write(text)
+            except (OSError, ValueError):
+                try:
+                    with open(path) as f:  # stale cache is still better than nothing
+                        text = f.read()
+                except OSError:
+                    pass
+        found = [l.strip() for l in text.splitlines()
+                 if l.strip().startswith(("udp://", "http://", "https://", "wss://"))]
+        if found:
+            self.trackers = list(dict.fromkeys(found + EXTRA_TRACKERS))
+        for h in list(self.handles.values()):
+            self._add_trackers(h)
+
+    def _add_trackers(self, h):
+        if not h.is_valid():
+            return
+        try:
+            have = {t["url"] for t in h.trackers()}
+            for i, url in enumerate(self.trackers):
+                if url not in have:
+                    h.add_tracker({"url": url, "tier": 100 + i})
+        except Exception:
+            pass
+
     def _add(self, atp, start=False):
         # Not auto-managed: torrents start right away and pause/resume do exactly that.
         atp.flags = (atp.flags & ~lt.torrent_flags.auto_managed) & ~lt.torrent_flags.duplicate_is_error
@@ -253,6 +345,7 @@ class TorrentEngine:
         key = self._key(h)
         new = key not in self.handles
         self.handles[key] = h
+        self._add_trackers(h)
         st = h.status()
         if st.is_finished or st.is_seeding:
             self._was_done.add(key)

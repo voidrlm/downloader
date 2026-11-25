@@ -528,8 +528,6 @@ class Window(Adw.ApplicationWindow):
 
         menu = Gio.Menu()
         s = Gio.Menu()
-        s.append("Pause All", "win.pause-all")
-        s.append("Resume All", "win.resume-all")
         s.append("Clear Finished", "win.clear-finished")
         menu.append_section(None, s)
         s = Gio.Menu()
@@ -539,6 +537,9 @@ class Window(Adw.ApplicationWindow):
         menu.append_section(None, s)
         header.pack_end(Gtk.MenuButton(icon_name="open-menu-symbolic", menu_model=menu,
                                        primary=True, tooltip_text="Main Menu"))
+        for icon, tip, action in (("media-playback-start-symbolic", "Resume All", "win.resume-all"),
+                                  ("media-playback-stop-symbolic", "Stop All", "win.pause-all")):
+            header.pack_end(Gtk.Button(icon_name=icon, tooltip_text=tip, action_name=action))
         tv.add_top_bar(header)
         self.banner = Adw.Banner()
         self.banner.connect("button-clicked", lambda *_: app.install_engines())
@@ -762,7 +763,7 @@ class Window(Adw.ApplicationWindow):
             eng = self.app.engine(it)
             if pause and it.state not in (PAUSED, DONE, ERROR):
                 eng.pause(it.key[2:])
-            elif not pause and it.state == PAUSED:
+            elif not pause and it.state in (PAUSED, ERROR):
                 eng.resume(it.key[2:])
         self.app.tick()
 
