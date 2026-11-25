@@ -41,7 +41,6 @@ DEFAULTS = {
     "max_up_kib": 0,
     "connections": 16,     # per direct link
     "max_active": 5,       # direct links downloading at once
-    "seed": False,         # keep sharing finished torrents (no UI; the user wants it off)
     "notify": True,
     "engines": {},         # search engine id -> on/off; missing = engine's default
 }
@@ -70,6 +69,8 @@ def load_config():
             cfg.update(json.load(f))
     except (OSError, ValueError):
         pass
+    for gone in ("seed", "max_up_kib"):  # settings that no longer exist
+        cfg.pop(gone, None)
     return cfg
 
 

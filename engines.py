@@ -213,7 +213,7 @@ class TorrentEngine:
     # -- settings / persistence
 
     def apply_settings(self, s):
-        self.seed = bool(s.get("seed", False))
+        self.seed = False  # finished torrents never keep sharing (the user's choice)
         self.ses.apply_settings({
             "download_rate_limit": int(s.get("max_down_kib", 0)) * 1024,
             "upload_rate_limit": int(s.get("max_up_kib", 0)) * 1024,
