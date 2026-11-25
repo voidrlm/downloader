@@ -198,17 +198,28 @@ class DownloadRow(Gtk.ListBoxRow):
         self.folder.connect("clicked", lambda *_: self.win.show_in_folder(self.item))
         box.append(self.folder)
 
-        menu = Gio.Menu()
-        sec = Gio.Menu()
-        sec.append("Open", "row.open")
-        sec.append("Show in Folder", "row.folder")
-        sec.append("Copy Link", "row.copy")
-        menu.append_section(None, sec)
-        sec = Gio.Menu()
-        sec.append("Remove from List", "row.remove")
-        sec.append("Remove and Delete Files", "row.delete")
-        menu.append_section(None, sec)
-        more = Gtk.MenuButton(icon_name="view-more-symbolic", menu_model=menu,
+        # The "more" popover is a single row of icon buttons (tooltips name them).
+        pop = Gtk.Popover(has_arrow=True)
+        icons = Gtk.Box(spacing=2, margin_top=2, margin_bottom=2, margin_start=2, margin_end=2)
+        for entry in (("open", "document-open-symbolic", "Open"),
+                      ("folder", "folder-open-symbolic", "Show in Folder"),
+                      ("copy", "edit-copy-symbolic", "Copy Link"),
+                      None,
+                      ("remove", "list-remove-symbolic", "Remove from List"),
+                      ("delete", "user-trash-symbolic", "Remove and Delete Files")):
+            if entry is None:
+                icons.append(Gtk.Separator(orientation=Gtk.Orientation.VERTICAL, margin_start=4,
+                                           margin_end=4))
+                continue
+            action, icon, tip = entry
+            b = Gtk.Button(icon_name=icon, tooltip_text=tip, action_name="row." + action)
+            b.add_css_class("flat")
+            if action == "delete":
+                b.add_css_class("destructive-action")
+            b.connect("clicked", lambda *_: pop.popdown())
+            icons.append(b)
+        pop.set_child(icons)
+        more = Gtk.MenuButton(icon_name="view-more-symbolic", popover=pop,
                               valign=Gtk.Align.CENTER, tooltip_text="More")
         more.add_css_class("flat")
         more.add_css_class("circular")
@@ -965,7 +976,11 @@ class App(Adw.Application):
         app = Gio.AppInfo.get_default_for_type(mime, False) or Gio.AppInfo.get_default_for_type("video/mp4", False)
         app_id = (app.get_id() or "") if app else ""
         cmd = None
-        if "vlc" in app_id.lower():
+        if "reel" in app_id.lower():
+            reel = os.path.expanduser("~/.local/bin/reel")
+            cmd = [reel if os.path.exists(reel) else "reel", f"--title={title}"] + \
+                  [f"--sub-file={s}" for s in subs[:1]] + [target]
+        elif "vlc" in app_id.lower():
             base = ["flatpak", "run", "org.videolan.VLC"] if app_id == "org.videolan.VLC.desktop" else ["vlc"]
             cmd = base + [f"--meta-title={title}"] + [f"--sub-file={s}" for s in subs[:1]] + [target]
         elif "celluloid" in app_id.lower():
