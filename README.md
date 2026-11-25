@@ -17,7 +17,7 @@ A simple torrent and download manager for GNOME — like qBittorrent, minus the 
   files and the video's first and last pieces fetched first. The ▶ button opens the video in
   your default player (VLC, mpv or Celluloid get the subtitles too) through a local stream
   server on 127.0.0.1 that waits for each piece, so seeking works too.
-- Notifications when finished; downloads run unlimited with 16 connections per direct link.
+- Downloads run unlimited with 16 connections per direct link.
 
 ## Install (Fedora)
 

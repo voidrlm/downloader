@@ -41,7 +41,6 @@ DEFAULTS = {
     "max_up_kib": 0,
     "connections": 16,     # per direct link
     "max_active": 5,       # direct links downloading at once
-    "notify": True,
     "engines": {},         # search engine id -> on/off; missing = engine's default
 }
 
@@ -69,7 +68,7 @@ def load_config():
             cfg.update(json.load(f))
     except (OSError, ValueError):
         pass
-    for gone in ("seed", "max_up_kib"):  # settings that no longer exist
+    for gone in ("seed", "max_up_kib", "notify"):  # settings that no longer exist
         cfg.pop(gone, None)
     return cfg
 
@@ -439,7 +438,6 @@ class PrefsDialog(Adw.PreferencesDialog):
         self.folder_row.add_suffix(Gtk.Image(icon_name="folder-open-symbolic"))
         self.folder_row.connect("activated", self.on_folder)
         g.add(self.folder_row)
-        g.add(self.switch("Notify when a download finishes", "notify"))
         page.add(g)
 
         page.set_title("General")
@@ -1032,15 +1030,9 @@ class App(Adw.Application):
             items += self.links.poll()
         if self.window:
             self.window.update(items)
-        finished = []
         for eng in (self.torrents, self.links):
             if eng:
-                finished += eng.pop_finished()
-        if finished and self.cfg.get("notify", True):
-            n = Gio.Notification.new("Download finished" if len(finished) == 1
-                                     else f"{len(finished)} downloads finished")
-            n.set_body("\n".join(finished[:5]))
-            self.send_notification(None, n)
+                eng.pop_finished()  # no notifications: the user doesn't want dock badges
         return True
 
     def set_pref(self, key, value):
