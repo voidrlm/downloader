@@ -13,6 +13,10 @@ A simple torrent and download manager for GNOME — like qBittorrent, minus the 
   Internet Archive, each switchable in Preferences → Search (like qBittorrent's search
   plugins). Results are sorted by seeds; torrents with 0 seeds are hidden. Internet Archive
   items open a file list for direct downloads, or download the whole item as a web-seeded torrent.
+- **Watch while downloading**: torrents with a video download in order, with any subtitle
+  files and the video's first and last pieces fetched first. The ▶ button opens the video in
+  your default player (VLC, mpv or Celluloid get the subtitles too) through a local stream
+  server on 127.0.0.1 that waits for each piece, so seeking works too.
 - Speed limits, connections per download, notifications when finished.
 
 ## Install (Fedora)

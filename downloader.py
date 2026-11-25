@@ -20,6 +20,7 @@ from gi.repository import Adw, Gdk, Gio, GLib, GObject, Gtk, Pango  # noqa: E402
 import engines  # noqa: E402
 import search  # noqa: E402
 import search_ui  # noqa: E402
+import stream  # noqa: E402
 from engines import (CHECKING, CONNECTING, DONE, DOWNLOADING, ERROR, FINISHED_STATES,  # noqa: E402
                      METADATA, PAUSED, QUEUED, SEEDING)
 
@@ -176,6 +177,13 @@ class DownloadRow(Gtk.ListBoxRow):
         mid.append(self.status)
         box.append(mid)
 
+        self.play = Gtk.Button(icon_name="media-playback-start-symbolic", valign=Gtk.Align.CENTER,
+                               tooltip_text="Play", visible=False)
+        self.play.add_css_class("circular")
+        self.play.add_css_class("suggested-action")
+        self.play.connect("clicked", lambda *_: self.win.app.play(self.item))
+        box.append(self.play)
+
         self.toggle = Gtk.Button(valign=Gtk.Align.CENTER)
         self.toggle.add_css_class("flat")
         self.toggle.add_css_class("circular")
@@ -223,7 +231,7 @@ class DownloadRow(Gtk.ListBoxRow):
 
     def update(self, it):
         self.item = it
-        sig = (it.name, it.state, it.done, it.total, it.down, it.up, it.peers, it.error)
+        sig = (it.name, it.state, it.done, it.total, it.down, it.up, it.peers, it.error, it.stream)
         if sig == self._last:
             return
         self._last = sig
@@ -271,6 +279,7 @@ class DownloadRow(Gtk.ListBoxRow):
             self.toggle.set_tooltip_text("Pause")
         self.toggle.set_visible(it.state != DONE)
         self.folder.set_visible(finished)
+        self.play.set_visible(it.stream and it.state != ERROR)
         self.actions.lookup_action("open").set_enabled(finished or it.kind == "torrent")
         self.actions.lookup_action("copy").set_enabled(bool(it.link))
 
@@ -832,6 +841,7 @@ class App(Adw.Application):
         super().__init__(application_id=APP_ID,
                          flags=Gio.ApplicationFlags.HANDLES_COMMAND_LINE)
         self.window = None
+        self.streamer = None
         self.torrents = None
         self.links = None
         self.cfg = load_config()
@@ -931,6 +941,65 @@ class App(Adw.Application):
                 self.window.toast(str(e))
         self.tick()
         return added
+
+    # -- watching videos
+
+    def play(self, it, waited=0):
+        """Open the torrent's video in a player, streaming it if it isn't finished yet."""
+        if it.kind != "torrent" or not self.torrents:
+            return
+        key = it.key[2:]
+        info = self.torrents.video_info(key)
+        if not info:
+            self.window.toast("No video in this download")
+            return
+        if it.state == PAUSED:
+            self.torrents.resume(key)
+        # Subtitles are fetched first; give them a few seconds so the player can load them.
+        pending_subs = [p for p, done in info["subs"] if not done]
+        if pending_subs and not any(done for _p, done in info["subs"]) and waited < 15 and not info["complete"]:
+            if waited == 0:
+                self.window.toast("Getting subtitles first…")
+            GLib.timeout_add(1000, lambda: (self.play(it, waited + 1), False)[1])
+            return
+        subs = [p for p, done in info["subs"] if done]
+        if info["complete"]:
+            target = info["path"]
+        else:
+            if self.streamer is None:
+                self.streamer = stream.StreamServer(self.torrents)
+            target = self.streamer.url(key, info["index"], info["name"])
+        self.launch_player(target, info["name"], subs)
+
+    def launch_player(self, target, title, subs):
+        is_url = target.startswith("http")
+        mime = Gio.content_type_guess(title, None)[0]
+        app = Gio.AppInfo.get_default_for_type(mime, False) or Gio.AppInfo.get_default_for_type("video/mp4", False)
+        app_id = (app.get_id() or "") if app else ""
+        cmd = None
+        if "vlc" in app_id.lower():
+            base = ["flatpak", "run", "org.videolan.VLC"] if app_id == "org.videolan.VLC.desktop" else ["vlc"]
+            cmd = base + [f"--meta-title={title}"] + [f"--sub-file={s}" for s in subs[:1]] + [target]
+        elif "celluloid" in app_id.lower():
+            cmd = ["celluloid"] + [f"--mpv-sub-file={s}" for s in subs] + [target]
+        elif "mpv" in app_id.lower():
+            cmd = ["mpv", "--force-window=immediate", f"--force-media-title={title}"] + \
+                  [f"--sub-file={s}" for s in subs] + [target]
+        if cmd:
+            try:
+                subprocess.Popen(cmd, start_new_session=True, stdin=subprocess.DEVNULL,
+                                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                return
+            except OSError:
+                pass
+        uri = target if is_url else Gio.File.new_for_path(target).get_uri()
+        try:
+            if app:
+                app.launch_uris([uri], None)
+                return
+        except GLib.Error:
+            pass
+        Gtk.UriLauncher(uri=uri).launch(self.window, None, None)
 
     def fetch_torrent(self, url, folder):
         def work():

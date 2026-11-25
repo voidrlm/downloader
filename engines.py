@@ -14,6 +14,7 @@ import shutil
 import socket
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.parse
 import urllib.request
@@ -36,12 +37,16 @@ ERROR = "error"
 
 FINISHED_STATES = (SEEDING, DONE)
 
+VIDEO_EXT = (".mkv", ".mp4", ".m4v", ".avi", ".mov", ".webm", ".wmv", ".ts", ".m2ts", ".mpg",
+             ".mpeg", ".flv", ".ogv")
+SUB_EXT = (".srt", ".ass", ".ssa", ".vtt", ".sub", ".idx", ".smi")
+
 
 class Item:
     """One download as the UI sees it."""
 
     __slots__ = ("key", "kind", "name", "total", "done", "down", "up", "state", "peers",
-                 "seeds", "error", "save_dir", "path", "added", "link", "ratio")
+                 "seeds", "error", "save_dir", "path", "added", "link", "ratio", "stream")
 
     def __init__(self, key, kind):
         self.key = key
@@ -60,6 +65,7 @@ class Item:
         self.added = 0.0
         self.link = ""
         self.ratio = 0.0
+        self.stream = False  # has a video that can be played while downloading
 
     @property
     def progress(self):
@@ -162,6 +168,7 @@ class TorrentEngine:
         self._was_done = set()  # keys already seen finished (so we notify once)
         self._seed_stopped = set()
         self._last_resume_save = time.monotonic()
+        self.media = {}         # key -> {"video": file index or None, "subs": [file indexes]}
         self.seed = True
         self.ses = lt.session({
             "listen_interfaces": "0.0.0.0:6881,[::]:6881",
@@ -176,8 +183,33 @@ class TorrentEngine:
             "active_downloads": -1, "active_seeds": -1, "active_limit": -1,
         })
         self.apply_settings(settings)
+        self._piece_waiters = {}  # (key, piece) -> [[threading.Event, data]]
+        self._lock = threading.Lock()
+        self._alive = True
         self._load_saved()
+        # Alerts are handled on their own thread so piece reads for the stream server
+        # come back in milliseconds, not on the UI's 1 s refresh.
+        self._alert_thread = threading.Thread(target=self._alert_loop, daemon=True)
+        self._alert_thread.start()
 
+    def _alert_loop(self):
+        # Not ses.wait_for_alert(): the Python binding holds the GIL while it waits, which
+        # starves the GTK thread.  A 20 ms sleep releases it and still answers quickly.
+        while self._alive:
+            self._handle_alerts()
+            time.sleep(0.02)
+
+    def read_piece(self, key, h, piece, timeout=60):
+        """Piece data straight from libtorrent (call from a worker thread, after have_piece).
+
+        Reading the file instead could return blocks libtorrent hasn't written yet.
+        """
+        slot = [threading.Event(), None]
+        with self._lock:
+            self._piece_waiters.setdefault((key, piece), []).append(slot)
+        h.read_piece(piece)
+        slot[0].wait(timeout)
+        return slot[1]
     # -- settings / persistence
 
     def apply_settings(self, s):
@@ -226,7 +258,98 @@ class TorrentEngine:
             self._was_done.add(key)
         if new:
             h.save_resume_data(lt.torrent_handle.save_info_dict)
+        self._media(key, h)
         return key
+
+    # -- video: play while downloading
+
+    @staticmethod
+    def piece_range(ti, index):
+        size = ti.files().file_size(index)
+        if size <= 0:
+            return None
+        return ti.map_file(index, 0, 0).piece, ti.map_file(index, size - 1, 0).piece
+
+    def _media(self, key, h):
+        """Find the main video and subtitle files once the torrent's file list is known, and
+        set the torrent up for watching while it downloads: pieces in order, subtitles and the
+        video's first and last pieces (where players look for the index) before anything else.
+        """
+        if key in self.media:
+            return self.media[key]
+        ti = h.torrent_file()
+        if ti is None:
+            return None  # magnet link still fetching its file list
+        fs = ti.files()
+        videos, subs = [], []
+        for i in range(fs.num_files()):
+            path = fs.file_path(i).lower()
+            name = os.path.basename(path)
+            if path.endswith(VIDEO_EXT) and not name.startswith("sample") and ".sample." not in name:
+                videos.append((fs.file_size(i), i))
+            elif path.endswith(SUB_EXT):
+                subs.append(i)
+        m = {"video": max(videos)[1] if videos else None, "subs": subs}
+        self.media[key] = m
+        if m["video"] is None:
+            return m
+        h.set_flags(lt.torrent_flags.sequential_download)
+        if subs:
+            prios = list(h.get_file_priorities())
+            for i in subs:
+                prios[i] = 7
+            h.prioritize_files(prios)
+            for i in subs:
+                r = self.piece_range(ti, i)
+                if r:
+                    for p in range(r[0], r[1] + 1):
+                        h.set_piece_deadline(p, 0)
+        r = self.piece_range(ti, m["video"])
+        if r:
+            first, last = r
+            pl = ti.piece_length()
+            head = max(2, (8 << 20) // pl)
+            tail = max(1, (4 << 20) // pl)
+            for k, p in enumerate(range(first, min(last, first + head) + 1)):
+                h.set_piece_deadline(p, 300 + k * 50)
+            for p in range(max(first, last - tail + 1), last + 1):
+                h.set_piece_deadline(p, 800)
+        return m
+
+    def video_info(self, key):
+        """Where the torrent's video and subtitles are, and whether they're complete."""
+        h = self.handles.get(key)
+        if not h:
+            return None
+        m = self._media(key, h)
+        if not m or m["video"] is None:
+            return None
+        ti = h.torrent_file()
+        fs = ti.files()
+        save = h.status().save_path
+        prog = h.file_progress()
+        vid = m["video"]
+        subs = sorted(m["subs"], key=lambda i: (not any(w in fs.file_path(i).lower() for w in ("eng", "english")),
+                                                fs.file_path(i).lower()))
+        return {
+            "index": vid,
+            "name": os.path.basename(fs.file_path(vid)),
+            "path": os.path.join(save, fs.file_path(vid)),
+            "size": fs.file_size(vid),
+            "complete": prog[vid] >= fs.file_size(vid),
+            "subs": [(os.path.join(save, fs.file_path(i)), prog[i] >= fs.file_size(i)) for i in subs],
+        }
+
+    def stream_target(self, key, index):
+        """(handle, torrent_info, path on disk, size) for the stream server."""
+        h = self.handles.get(key)
+        if not h or not h.is_valid():
+            return None
+        ti = h.torrent_file()
+        if ti is None or index >= ti.files().num_files():
+            return None
+        fs = ti.files()
+        return h, ti, os.path.join(h.status().save_path, fs.file_path(index)), fs.file_size(index)
 
     # -- adding
 
@@ -265,6 +388,7 @@ class TorrentEngine:
         self.ses.remove_torrent(h, lt.session.delete_files if delete_files else 0)
         for s in (self._was_done, self._seed_stopped):
             s.discard(key)
+        self.media.pop(key, None)
         try:
             os.remove(self._resume_file(key))
         except FileNotFoundError:
@@ -282,8 +406,16 @@ class TorrentEngine:
                             f.write(lt.write_resume_data_buf(a.params))
                     except OSError as e:
                         print("Couldn't save resume data:", e)
+            elif isinstance(a, lt.read_piece_alert):
+                with self._lock:
+                    waiters = self._piece_waiters.pop((self._key(a.handle), a.piece), [])
+                data = None if a.error.value() else bytes(a.buffer)
+                for slot in waiters:
+                    slot[1] = data
+                    slot[0].set()
             elif isinstance(a, lt.metadata_received_alert):
                 a.handle.save_resume_data(lt.torrent_handle.save_info_dict)
+                self._media(self._key(a.handle), a.handle)
             elif isinstance(a, (lt.torrent_error_alert, lt.file_error_alert)):
                 try:
                     self.errors[self._key(a.handle)] = a.message()
@@ -291,7 +423,6 @@ class TorrentEngine:
                     pass
 
     def poll(self):
-        self._handle_alerts()
         now = time.monotonic()
         periodic = now - self._last_resume_save > 60
         if periodic:
@@ -315,6 +446,8 @@ class TorrentEngine:
             it.path = os.path.join(st.save_path, st.name) if st.name else st.save_path
             it.added = st.added_time
             it.ratio = (st.all_time_upload / st.total_wanted) if st.total_wanted else 0.0
+            m = self._media(key, h) if st.has_metadata else None
+            it.stream = bool(m and m["video"] is not None)
             paused = bool(st.flags & lt.torrent_flags.paused)
             finished = st.is_finished or st.is_seeding
             if finished and key not in self._was_done:
@@ -354,6 +487,8 @@ class TorrentEngine:
 
     def shutdown(self, timeout=6.0):
         """Save resume data for every torrent, then stop the session."""
+        self._alive = False
+        self._alert_thread.join(1)
         self.ses.pause()
         waiting = 0
         for h in self.handles.values():
