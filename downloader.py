@@ -430,17 +430,6 @@ class PrefsDialog(Adw.PreferencesDialog):
         g.add(self.switch("Notify when a download finishes", "notify"))
         page.add(g)
 
-        g = Adw.PreferencesGroup(title="Speed Limits", description="0 means no limit.")
-        g.add(self.spin("Download limit", "KB/s", "max_down_kib", 0, 10_000_000, 100))
-        g.add(self.spin("Upload limit", "KB/s, torrents only", "max_up_kib", 0, 10_000_000, 100))
-        page.add(g)
-
-        g = Adw.PreferencesGroup(title="Direct Links")
-        g.add(self.spin("Connections per download",
-                        "More connections are faster on servers that limit each one", "connections", 1, 16, 1))
-        g.add(self.spin("Downloads at the same time", None, "max_active", 1, 20, 1))
-        page.add(g)
-
         g = Adw.PreferencesGroup(title="Torrents")
         g.add(self.switch("Keep sharing after downloading",
                           "Uploads finished torrents to others, like qBittorrent does", "seed"))
