@@ -24,6 +24,26 @@ try:
 except ImportError:  # the app still works for direct links without it
     lt = None
 
+# The packages that provide each engine, per package manager: (manager, install command, names).
+PACKAGE_MANAGERS = [
+    ("dnf", ["dnf", "install", "-y"], {"libtorrent": "rb_libtorrent-python3", "aria2": "aria2"}),
+    ("apt-get", ["apt-get", "install", "-y"], {"libtorrent": "python3-libtorrent", "aria2": "aria2"}),
+    ("pacman", ["pacman", "-S", "--needed", "--noconfirm"], {"libtorrent": "libtorrent-rasterbar", "aria2": "aria2"}),
+]
+
+
+def install_command(engines_needed):
+    """The command that installs these engines ("libtorrent", "aria2") on this system, or None."""
+    for manager, cmd, names in PACKAGE_MANAGERS:
+        if shutil.which(manager):
+            return cmd + [names[e] for e in engines_needed]
+    return None
+
+
+def install_hint(engine):
+    cmd = install_command([engine])
+    return ("sudo " + " ".join(cmd)) if cmd else f"install {engine} with your package manager"
+
 # Item.state values
 METADATA = "metadata"      # magnet link: still fetching the torrent's file list
 CHECKING = "checking"      # verifying data already on disk
@@ -172,7 +192,7 @@ def _write_json(path, data):
 
 class TorrentEngine:
     available = lt is not None
-    missing_hint = "Torrents need libtorrent:  sudo dnf install rb_libtorrent-python3"
+    missing_hint = "Torrents need libtorrent:  " + install_hint("libtorrent")
 
     def __init__(self, state_dir, settings):
         self.dir = os.path.join(state_dir, "torrents")
@@ -615,7 +635,7 @@ class TorrentEngine:
 # ------------------------------------------------------------------ direct links (aria2)
 
 class LinkEngine:
-    missing_hint = "Direct links need aria2:  sudo dnf install aria2"
+    missing_hint = "Direct links need aria2:  " + install_hint("aria2")
 
     def __init__(self, state_dir, settings):
         self.binary = os.environ.get("DOWNLOADER_ARIA2C") or shutil.which("aria2c")

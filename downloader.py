@@ -7,6 +7,7 @@ with many connections per file.  One list shows both.
 import json
 import os
 import subprocess
+import shutil
 import sys
 import threading
 import time
@@ -1068,21 +1069,25 @@ class App(Adw.Application):
     def missing_packages(self):
         pkgs = []
         if not engines.TorrentEngine.available:
-            pkgs.append("rb_libtorrent-python3")
+            pkgs.append("libtorrent")
         if not self.links.binary:
             pkgs.append("aria2")
         return pkgs
 
     def install_engines(self):
-        """Install the missing engines with dnf behind the normal GNOME password prompt."""
+        """Install the missing engines with the system's package manager behind the password prompt."""
         pkgs = self.missing_packages()
         win = self.window
         if not pkgs:
             return
+        cmd = engines.install_command(pkgs)
+        if not cmd or not shutil.which("pkexec"):
+            win.toast("Install " + " and ".join(pkgs) + " with your package manager, then restart Downloader")
+            return
         win.banner.set_title("Installing… enter your password if asked")
         win.banner.set_button_label(None)
         try:
-            proc = Gio.Subprocess.new(["pkexec", "dnf", "install", "-y", *pkgs],
+            proc = Gio.Subprocess.new(["pkexec", *cmd],
                                       Gio.SubprocessFlags.STDOUT_SILENCE | Gio.SubprocessFlags.STDERR_PIPE)
         except GLib.Error as e:
             win.toast(f"Couldn't start the installer: {e.message}")
