@@ -41,7 +41,7 @@ DEFAULTS = {
     "max_up_kib": 0,
     "connections": 16,     # per direct link
     "max_active": 5,       # direct links downloading at once
-    "seed": True,          # keep sharing finished torrents
+    "seed": False,         # keep sharing finished torrents (no UI; the user wants it off)
     "notify": True,
     "engines": {},         # search engine id -> on/off; missing = engine's default
 }
@@ -430,10 +430,6 @@ class PrefsDialog(Adw.PreferencesDialog):
         g.add(self.switch("Notify when a download finishes", "notify"))
         page.add(g)
 
-        g = Adw.PreferencesGroup(title="Torrents")
-        g.add(self.switch("Keep sharing after downloading",
-                          "Uploads finished torrents to others, like qBittorrent does", "seed"))
-        page.add(g)
         page.set_title("General")
         page.set_icon_name("emblem-system-symbolic")
         self.add(page)

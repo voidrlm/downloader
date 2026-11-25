@@ -169,7 +169,7 @@ class TorrentEngine:
         self._seed_stopped = set()
         self._last_resume_save = time.monotonic()
         self.media = {}         # key -> {"video": file index or None, "subs": [file indexes]}
-        self.seed = True
+        self.seed = False
         self.ses = lt.session({
             "listen_interfaces": "0.0.0.0:6881,[::]:6881",
             "enable_dht": True, "enable_lsd": True, "enable_upnp": True, "enable_natpmp": True,
@@ -213,7 +213,7 @@ class TorrentEngine:
     # -- settings / persistence
 
     def apply_settings(self, s):
-        self.seed = bool(s.get("seed", True))
+        self.seed = bool(s.get("seed", False))
         self.ses.apply_settings({
             "download_rate_limit": int(s.get("max_down_kib", 0)) * 1024,
             "upload_rate_limit": int(s.get("max_up_kib", 0)) * 1024,
@@ -458,6 +458,10 @@ class TorrentEngine:
                     h.pause()
                     self._seed_stopped.add(key)
                     paused = True
+            if finished and not self.seed and not paused:
+                h.pause()  # also stops ones that finished in an earlier session
+                self._seed_stopped.add(key)
+                paused = True
             err = st.errc.message() if st.errc.value() else self.errors.get(key, "")
             if err and paused:
                 it.state, it.error = ERROR, err

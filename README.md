@@ -3,7 +3,7 @@
 A simple torrent and download manager for GNOME — like qBittorrent, minus the 40 columns.
 
 - **Torrents & magnet links** via libtorrent (the engine qBittorrent uses): DHT, peer exchange,
-  local discovery, UPnP/NAT-PMP, resume after restart, optional seeding.
+  local discovery, UPnP/NAT-PMP, resume after restart; finished torrents stop sharing.
 - **Direct links** (http/https/ftp) via aria2 with up to 16 connections per file, so servers
   that throttle each connection still give you full speed. Partial files resume.
 - One list for both, with All / Downloading / Finished filters, total speed and free space.
