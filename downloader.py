@@ -515,8 +515,8 @@ class Window(Adw.ApplicationWindow):
         add = Gtk.Button(icon_name="list-add-symbolic", tooltip_text="Add Download (Ctrl+N)")
         add.connect("clicked", lambda *_: self.show_add())
         header.pack_start(add)
-        self.search_entry = Gtk.SearchEntry(placeholder_text="Search torrents & archive.org",
-                                            width_chars=26, tooltip_text="Search (Ctrl+F)")
+        self.search_entry = Gtk.SearchEntry(placeholder_text="Search", width_chars=12,
+                                            max_width_chars=12, tooltip_text="Search (Ctrl+F)")
         self.search_entry.connect("activate", lambda e: self.run_search(e.get_text()))
         self.search_entry.connect("stop-search", lambda *_: self.leave_search())
         header.pack_start(self.search_entry)
